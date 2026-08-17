@@ -575,7 +575,7 @@ We welcome contributions! Here's how to get started:
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=openags/paper-search-mcp&type=Date)](https://star-history.com/#openags/paper-search-mcp&Date)
+[![Star History Chart](https://star-history.dera.page/svg?repos=openags/paper-search-mcp&type=Date)](https://star-history.dera.page/#openags/paper-search-mcp&Date)
 
 ---
 
