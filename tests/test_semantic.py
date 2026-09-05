@@ -6,10 +6,13 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from paper_search_mcp.academic_platforms.semantic import SemanticSearcher
+from tests.live import live_tests_enabled
 
 
 def check_semantic_accessible():
     """Check if Semantic Scholar is accessible"""
+    if not live_tests_enabled():
+        return False
     try:
         response = requests.get("https://api.semanticscholar.org/graph/v1/paper/5bbfdf2e62f0508c65ba6de9c72fe2066fd98138", timeout=5)
         return response.status_code == 200
@@ -64,7 +67,7 @@ class TestSemanticSearcher(unittest.TestCase):
         self.assertIsNotNone(paper)
         self.assertIsNone(paper.published_date)
 
-    @unittest.skipUnless(check_semantic_accessible(), "Semantic Scholar not accessible")
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_search_basic(self):
         """Test basic search functionality"""
         results = self.searcher.search("secret sharing", max_results=3)
@@ -81,19 +84,19 @@ class TestSemanticSearcher(unittest.TestCase):
             self.assertTrue(hasattr(paper, "url"))
             self.assertEqual(paper.source, "semantic")
 
-    @unittest.skipUnless(check_semantic_accessible(), "Semantic Scholar not accessible")
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_search_empty_query(self):
         """Test search with empty query"""
         results = self.searcher.search("", max_results=3)
         self.assertIsInstance(results, list)
 
-    @unittest.skipUnless(check_semantic_accessible(), "Semantic Scholar not accessible")
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_search_max_results(self):
         """Test max_results parameter"""
         results = self.searcher.search("cryptography", max_results=2)
         self.assertLessEqual(len(results), 2)
 
-    @unittest.skipUnless(check_semantic_accessible(), "Semantic Scholar not accessible")
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_download_pdf_functionality(self):
         """Test PDF download method with actual download"""
         import tempfile
@@ -146,7 +149,7 @@ class TestSemanticSearcher(unittest.TestCase):
             if os.path.exists(test_dir):
                 shutil.rmtree(test_dir)
 
-    @unittest.skipUnless(check_semantic_accessible(), "Semantic Scholar not accessible")
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_read_paper_functionality(self):
         """Test read paper method with text extraction functionality"""
         import tempfile
@@ -207,7 +210,7 @@ class TestSemanticSearcher(unittest.TestCase):
             if os.path.exists(test_dir):
                 shutil.rmtree(test_dir)
 
-    @unittest.skipUnless(check_semantic_accessible(), "Semantic Scholar not accessible")
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_get_paper_details(self):
         """Test getting detailed paper information"""
         paper_id = "5bbfdf2e62f0508c65ba6de9c72fe2066fd98138"  # A known paper
@@ -237,7 +240,7 @@ class TestSemanticSearcher(unittest.TestCase):
         # printing all details for verification
         print(f"\n{paper_details}")
 
-    @unittest.skipUnless(check_semantic_accessible(), "Semantic Scholar not accessible")
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_search_with_fetch_details(self):
         """Test search functionality with fetch_details parameter"""
         # Test with fetch_details=True (detailed information)
@@ -287,7 +290,7 @@ class TestSemanticSearcher(unittest.TestCase):
             print(f"Categories: {', '.join(paper.categories)}")
             print(f"Abstract preview length: {len(paper.abstract)} chars")
 
-    @unittest.skipUnless(check_semantic_accessible(), "Semantic Scholar not accessible")
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_search_performance_comparison(self):
         """Test performance difference between detailed and compact search"""
         import time

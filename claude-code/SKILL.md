@@ -14,7 +14,10 @@ All commands run via:
 paper-search <command> [args]
 ```
 
-If `paper-search` is not available, install it with `uv tool install paper-search-mcp`. Optional API keys can be configured in `~/.config/paper-search-mcp/.env`.
+If `paper-search` is not available, install the fork by following the
+[fork installation instructions](../README.md#install-from-this-fork). The
+compatibility CLI remains `paper-search`; optional API keys can be configured
+in the user's local configuration.
 
 ### Search
 ```bash

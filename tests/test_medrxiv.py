@@ -2,9 +2,12 @@ import unittest
 import os
 import requests
 from paper_search_mcp.academic_platforms.medrxiv import MedRxivSearcher
+from tests.live import live_tests_enabled
 
 def check_api_accessible():
     """检查 medRxiv API 是否可访问"""
+    if not live_tests_enabled():
+        return False
     try:
         response = requests.get("https://api.medRxiv.org/details/medrxiv/0/1", timeout=5)
         return response.status_code == 200
@@ -21,6 +24,7 @@ class TestMedRxivSearcher(unittest.TestCase):
     def setUp(self):
         self.searcher = MedRxivSearcher()
 
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_search(self):
         if not self.api_accessible:
             self.skipTest("medRxiv API is not accessible")
@@ -32,6 +36,7 @@ class TestMedRxivSearcher(unittest.TestCase):
         self.assertTrue(len(papers) > 0)
         self.assertTrue(papers[0].title)
 
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_download_and_read(self):
         if not self.api_accessible:
             self.skipTest("medRxiv API is not accessible")

@@ -11,6 +11,7 @@ from requests.exceptions import SSLError
 from ..paper import Paper
 from ..utils import extract_doi
 from ..config import get_env
+from ..provider_identity import provider_user_agent
 from .base import PaperSource
 
 logger = logging.getLogger(__name__)
@@ -36,7 +37,7 @@ class OpenAiresearcher(PaperSource):
         self.api_key = api_key or get_env("OPENAIRE_API_KEY", "")
         self.session = requests.Session()
         self.session.headers.update({
-            'User-Agent': 'paper-search-mcp/1.0 (https://github.com/openags/paper-search-mcp)',
+            'User-Agent': provider_user_agent(),
             'Accept': 'application/json, application/xml'
         })
         if self.api_key:

@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 from ..paper import Paper
 from ..utils import extract_doi
+from ..provider_identity import DISTRIBUTION_NAME, contact_email, provider_user_agent
 from .base import PaperSource
 from pypdf import PdfReader
 
@@ -27,7 +28,7 @@ class PMCSearcher(PaperSource):
     def __init__(self):
         self.session = requests.Session()
         self.session.headers.update({
-            'User-Agent': 'paper-search-mcp/1.0 (mailto:openags@example.com)',
+            'User-Agent': provider_user_agent(),
             'Accept': 'application/xml'
         })
 
@@ -52,9 +53,11 @@ class PMCSearcher(PaperSource):
                 'term': query,
                 'retmax': max_results,
                 'retmode': 'xml',
-                'tool': 'paper-search-mcp',
-                'email': 'openags@example.com'
+                'tool': DISTRIBUTION_NAME,
             }
+            email = contact_email()
+            if email:
+                search_params['email'] = email
 
             search_response = self.session.get(self.EUTILS_SEARCH_URL, params=search_params, timeout=30)
             search_response.raise_for_status()
@@ -71,9 +74,10 @@ class PMCSearcher(PaperSource):
                 'db': 'pmc',
                 'id': ','.join(pmcids),
                 'retmode': 'xml',
-                'tool': 'paper-search-mcp',
-                'email': 'openags@example.com'
+                'tool': DISTRIBUTION_NAME,
             }
+            if email:
+                summary_params['email'] = email
 
             summary_response = self.session.get(self.EUTILS_SUMMARY_URL, params=summary_params, timeout=30)
             summary_response.raise_for_status()

@@ -6,6 +6,7 @@ import feedparser
 import time
 from ..paper import Paper
 from ..utils import extract_doi
+from ..provider_identity import provider_user_agent
 from .base import PaperSource
 from pypdf import PdfReader
 import os
@@ -17,7 +18,7 @@ class ArxivSearcher(PaperSource):
     def __init__(self):
         self.session = requests.Session()
         self.session.headers.update({
-            'User-Agent': 'paper-search-mcp/1.0 (mailto:openags@example.com)',
+            'User-Agent': provider_user_agent(),
             'Accept': 'application/atom+xml, application/xml;q=0.9, */*;q=0.8',
         })
 

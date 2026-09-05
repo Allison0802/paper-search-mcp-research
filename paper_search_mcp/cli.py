@@ -221,6 +221,31 @@ async def cmd_sources(args: argparse.Namespace) -> int:
     return 0
 
 
+async def cmd_issue_list(args: argparse.Namespace) -> int:
+    """List an exact journal issue through the MCP implementation."""
+    from .server import list_journal_issue
+
+    result = await list_journal_issue(args.journal, args.volume, args.issue)
+    print(json.dumps(result, indent=2, default=str))
+    return 1 if result.get("discovery_status") == "error" else 0
+
+
+async def cmd_issue_download(args: argparse.Namespace) -> int:
+    """Download an exact journal issue through the MCP implementation."""
+    from .server import download_journal_issue
+
+    result = await download_journal_issue(
+        args.journal,
+        args.volume,
+        args.issue,
+        save_path=args.save_path,
+        max_concurrency=args.concurrency,
+        overwrite=args.overwrite,
+    )
+    print(json.dumps(result, indent=2, default=str))
+    return 1 if result.get("discovery_status") == "error" else 0
+
+
 # ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
@@ -256,6 +281,21 @@ def build_parser() -> argparse.ArgumentParser:
     # sources
     sub.add_parser("sources", help="List available sources")
 
+    # issue-list
+    p_issue_list = sub.add_parser("issue-list", help="List every paper in an exact journal issue")
+    p_issue_list.add_argument("journal", help="Exact journal title (JASA is accepted as an alias)")
+    p_issue_list.add_argument("volume", help="Journal volume")
+    p_issue_list.add_argument("issue", help="Journal issue")
+
+    # issue-download
+    p_issue_download = sub.add_parser("issue-download", help="Download publicly accessible PDFs from an exact journal issue")
+    p_issue_download.add_argument("journal", help="Exact journal title (JASA is accepted as an alias)")
+    p_issue_download.add_argument("volume", help="Journal volume")
+    p_issue_download.add_argument("issue", help="Journal issue")
+    p_issue_download.add_argument("-o", "--save-path", default="./papers", help="Base output directory (default: ./papers)")
+    p_issue_download.add_argument("--concurrency", type=int, default=4, help="Maximum concurrent downloads (default: 4)")
+    p_issue_download.add_argument("--overwrite", action="store_true", help="Retrieve PDFs again even when valid files already exist")
+
     return parser
 
 
@@ -268,6 +308,8 @@ def main() -> None:
         "download": cmd_download,
         "read": cmd_read,
         "sources": cmd_sources,
+        "issue-list": cmd_issue_list,
+        "issue-download": cmd_issue_download,
     }
 
     exit_code = asyncio.run(dispatch[args.command](args))

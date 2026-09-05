@@ -2,10 +2,13 @@ import unittest
 import requests
 
 from paper_search_mcp.academic_platforms.zenodo import ZenodoSearcher
+from tests.live import live_tests_enabled
 
 
 def check_api_accessible() -> bool:
     """Check whether Zenodo API is reachable."""
+    if not live_tests_enabled():
+        return False
     try:
         response = requests.get(
             "https://zenodo.org/api/records",
@@ -27,6 +30,7 @@ class TestZenodoSearcher(unittest.TestCase):
     def setUp(self):
         self.searcher = ZenodoSearcher()
 
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_search_basic(self):
         if not self.api_accessible:
             self.skipTest("Zenodo API is not accessible")

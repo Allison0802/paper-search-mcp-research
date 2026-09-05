@@ -2,10 +2,13 @@ import unittest
 import os
 import requests
 from paper_search_mcp.academic_platforms.iacr import IACRSearcher
+from tests.live import live_tests_enabled
 
 
 def check_iacr_accessible():
     """Check if IACR ePrint Archive is accessible"""
+    if not live_tests_enabled():
+        return False
     try:
         response = requests.get("https://eprint.iacr.org", timeout=5)
         return response.status_code == 200
@@ -25,7 +28,7 @@ class TestIACRSearcher(unittest.TestCase):
     def setUp(self):
         self.searcher = IACRSearcher()
 
-    @unittest.skipUnless(check_iacr_accessible(), "IACR not accessible")
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_search_basic(self):
         """Test basic search functionality"""
         results = self.searcher.search("secret sharing", max_results=3)
@@ -42,19 +45,19 @@ class TestIACRSearcher(unittest.TestCase):
             self.assertTrue(hasattr(paper, "url"))
             self.assertEqual(paper.source, "iacr")
 
-    @unittest.skipUnless(check_iacr_accessible(), "IACR not accessible")
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_search_empty_query(self):
         """Test search with empty query"""
         results = self.searcher.search("", max_results=3)
         self.assertIsInstance(results, list)
 
-    @unittest.skipUnless(check_iacr_accessible(), "IACR not accessible")
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_search_max_results(self):
         """Test max_results parameter"""
         results = self.searcher.search("cryptography", max_results=2)
         self.assertLessEqual(len(results), 2)
 
-    @unittest.skipUnless(check_iacr_accessible(), "IACR not accessible")
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_download_pdf_functionality(self):
         """Test PDF download method with actual download"""
         import tempfile
@@ -107,7 +110,7 @@ class TestIACRSearcher(unittest.TestCase):
             if os.path.exists(test_dir):
                 shutil.rmtree(test_dir)
 
-    @unittest.skipUnless(check_iacr_accessible(), "IACR not accessible")
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_read_paper_functionality(self):
         """Test read paper method with text extraction functionality"""
         import tempfile
@@ -168,7 +171,7 @@ class TestIACRSearcher(unittest.TestCase):
             if os.path.exists(test_dir):
                 shutil.rmtree(test_dir)
 
-    @unittest.skipUnless(check_iacr_accessible(), "IACR not accessible")
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_get_paper_details(self):
         """Test getting detailed paper information"""
         paper_id = "2009/101"  # A known paper
@@ -198,7 +201,7 @@ class TestIACRSearcher(unittest.TestCase):
         else:
             self.fail("Could not fetch paper details")
 
-    @unittest.skipUnless(check_iacr_accessible(), "IACR not accessible")
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_search_with_fetch_details(self):
         """Test search functionality with fetch_details parameter"""
         # Test with fetch_details=True (detailed information)
@@ -248,7 +251,7 @@ class TestIACRSearcher(unittest.TestCase):
             print(f"Categories: {', '.join(paper.categories)}")
             print(f"Abstract preview length: {len(paper.abstract)} chars")
 
-    @unittest.skipUnless(check_iacr_accessible(), "IACR not accessible")
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_search_performance_comparison(self):
         """Test performance difference between detailed and compact search"""
         import time

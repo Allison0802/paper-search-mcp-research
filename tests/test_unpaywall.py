@@ -83,6 +83,46 @@ class TestUnpaywallResolver(unittest.TestCase):
             self.assertEqual(paper.authors, ["Alice Example"])
             self.assertEqual(paper.published_date, datetime(2024, 1, 15))
 
+    def test_ranked_pdf_candidates_prefer_version_of_record_then_accepted_then_preprint(self):
+        resolver = UnpaywallResolver(email="test@example.com")
+        resolver._fetch_doi_record = Mock(return_value={
+            "best_oa_location": {
+                "url_for_pdf": "https://repo.example/preprint.pdf",
+                "host_type": "repository",
+                "version": "submittedVersion",
+            },
+            "oa_locations": [
+                {
+                    "url_for_pdf": "https://repo.example/accepted.pdf",
+                    "host_type": "repository",
+                    "version": "acceptedVersion",
+                },
+                {
+                    "url_for_pdf": "https://publisher.example/final.pdf",
+                    "host_type": "publisher",
+                    "version": "publishedVersion",
+                },
+                {
+                    "url_for_pdf": "https://repo.example/final.pdf",
+                    "host_type": "repository",
+                    "version": "publishedVersion",
+                },
+            ],
+        })
+
+        candidates = resolver.resolve_ranked_pdf_candidates("10.1000/test")
+
+        self.assertEqual(
+            [(candidate["version_type"], candidate["host_type"]) for candidate in candidates],
+            [
+                ("version_of_record", "publisher"),
+                ("version_of_record", "repository"),
+                ("accepted_manuscript", "repository"),
+                ("preprint", "repository"),
+            ],
+        )
+        self.assertEqual(candidates[0]["url"], "https://publisher.example/final.pdf")
+
 
 if __name__ == "__main__":
     unittest.main()

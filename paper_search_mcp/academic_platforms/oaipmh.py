@@ -14,6 +14,7 @@ import xml.etree.ElementTree as ET
 import time
 import logging
 from ..paper import Paper
+from ..provider_identity import provider_user_agent
 from .base import PaperSource
 
 logger = logging.getLogger(__name__)
@@ -58,7 +59,7 @@ class OAIPMHSearcher(PaperSource):
         self.metadata_prefix = metadata_prefix
         self.session = requests.Session()
         self.session.headers.update({
-            'User-Agent': 'paper-search-mcp/0.1.3 (OAI-PMH client; https://github.com/openags/paper-search-mcp)',
+            'User-Agent': provider_user_agent('OAI-PMH client'),
             'Accept': 'application/xml'
         })
 

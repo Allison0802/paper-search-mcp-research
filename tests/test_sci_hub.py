@@ -5,10 +5,13 @@ import shutil
 import os
 import requests
 from paper_search_mcp.academic_platforms.sci_hub import SciHubFetcher
+from tests.live import live_tests_enabled
 
 
 def check_sci_hub_accessible():
     """Check if Sci-Hub is accessible"""
+    if not live_tests_enabled():
+        return False
     try:
         # Test with a simple request to see if sci-hub responds
         response = requests.get("https://sci-hub.se", timeout=10)
@@ -53,7 +56,7 @@ class TestSciHubFetcher(unittest.TestCase):
         result = self.fetcher.download_pdf("   ")
         self.assertIsNone(result)
 
-    @unittest.skipUnless(check_sci_hub_accessible(), "Sci-Hub not accessible")
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_download_pdf_known_doi(self):
         """Test download with well-known DOIs"""
         # List of valid DOIs for testing (mix of older and newer papers)
@@ -91,7 +94,7 @@ class TestSciHubFetcher(unittest.TestCase):
             print("All downloads failed - this may be expected due to Sci-Hub blocking or CAPTCHA")
             self.skipTest("All Sci-Hub downloads failed (possibly blocked or CAPTCHA)")
 
-    @unittest.skipUnless(check_sci_hub_accessible(), "Sci-Hub not accessible")
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_download_pdf_invalid_doi(self):
         """Test download with invalid DOI"""
         invalid_doi = "10.1234/invalid.doi.123456789"
@@ -128,7 +131,7 @@ class TestSciHubFetcher(unittest.TestCase):
         result = self.fetcher._get_direct_url(pdf_url)
         self.assertEqual(result, pdf_url)
 
-    @unittest.skipUnless(check_sci_hub_accessible(), "Sci-Hub not accessible")
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_get_direct_url_doi(self):
         """Test _get_direct_url with DOI"""
         # Use well-known DOIs
@@ -165,7 +168,7 @@ class TestSciHubFetcher(unittest.TestCase):
         fetcher = SciHubFetcher(output_dir=new_dir)
         self.assertTrue(os.path.exists(new_dir))
 
-    @unittest.skipUnless(check_sci_hub_accessible(), "Sci-Hub not accessible")
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_error_handling(self):
         """Test error handling for various scenarios"""
         # Test with clearly invalid/malformed identifier

@@ -29,6 +29,7 @@ from bs4 import BeautifulSoup
 
 from .base import PaperSource
 from ..paper import Paper
+from ..provider_identity import provider_user_agent
 
 logger = logging.getLogger(__name__)
 
@@ -47,17 +48,15 @@ class SSRNSearcher(PaperSource):
     SEARCH_URL = "https://www.ssrn.com/index.cfm/en/rps-stage1-results/"
     ALT_SEARCH_URL = "https://papers.ssrn.com/sol3/results.cfm"
     BASE_URL = "https://papers.ssrn.com"
-    USER_AGENT = (
-        "Mozilla/5.0 (compatible; paper-search-mcp/0.1.3; "
-        "+https://github.com/openags/paper-search-mcp)"
-    )
+    USER_AGENT = provider_user_agent()
     _RATE_LIMIT_SECONDS = 2.0  # polite delay between requests
 
     def __init__(self) -> None:
         self.session = requests.Session()
         self.session.headers.update(
             {
-                "User-Agent": self.USER_AGENT,
+                # Preserve the browser-compatible wrapper required by SSRN.
+                "User-Agent": f"Mozilla/5.0 (compatible; {provider_user_agent()})",
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.9",
             }

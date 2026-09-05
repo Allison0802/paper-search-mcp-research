@@ -17,6 +17,7 @@ import requests
 from .base import PaperSource
 from ..paper import Paper
 from ..config import get_env
+from ..provider_identity import provider_user_agent
 
 logger = logging.getLogger(__name__)
 
@@ -30,13 +31,13 @@ class ZenodoSearcher(PaperSource):
     """
 
     BASE_URL = "https://zenodo.org/api"
-    USER_AGENT = "paper-search-mcp/0.1.3 (https://github.com/openags/paper-search-mcp)"
+    USER_AGENT = provider_user_agent()
 
     def __init__(self, access_token: Optional[str] = None) -> None:
         self.access_token = access_token or get_env("ZENODO_ACCESS_TOKEN", "")
         self.session = requests.Session()
         self.session.headers.update(
-            {"User-Agent": self.USER_AGENT, "Accept": "application/json"}
+            {"User-Agent": provider_user_agent(), "Accept": "application/json"}
         )
         if self.access_token:
             self.session.headers.update(

@@ -13,6 +13,7 @@ from typing import List, Optional, Dict, Any
 import logging
 from .oaipmh import OAIPMHSearcher
 from ..paper import Paper
+from ..provider_identity import provider_user_agent
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ class BASESearcher(OAIPMHSearcher):
         )
         # Update User-Agent for BASE
         self.session.headers.update({
-            'User-Agent': 'paper-search-mcp/0.1.3 (BASE OAI-PMH client; https://github.com/openags/paper-search-mcp)'
+            'User-Agent': provider_user_agent('BASE OAI-PMH client')
         })
 
     def search(self, query: str, max_results: int = 10, **kwargs) -> List[Paper]:

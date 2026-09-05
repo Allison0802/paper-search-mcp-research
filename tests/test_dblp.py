@@ -3,10 +3,13 @@ import unittest
 import os
 import requests
 from paper_search_mcp.academic_platforms.dblp import DBLPSearcher
+from tests.live import live_tests_enabled
 
 
 def check_api_accessible():
     """Check if dblp API is accessible"""
+    if not live_tests_enabled():
+        return False
     try:
         # Test dblp API with a simple query
         response = requests.get(
@@ -29,6 +32,7 @@ class TestDBLPSearcher(unittest.TestCase):
     def setUp(self):
         self.searcher = DBLPSearcher()
 
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_search_basic(self):
         if not self.api_accessible:
             self.skipTest("dblp API is not accessible")
@@ -50,6 +54,7 @@ class TestDBLPSearcher(unittest.TestCase):
             self.assertTrue(papers[0].title)
             self.assertEqual(papers[0].source, 'dblp')
 
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_search_with_year_filter(self):
         if not self.api_accessible:
             self.skipTest("dblp API is not accessible")
@@ -69,6 +74,7 @@ class TestDBLPSearcher(unittest.TestCase):
 
         self.assertTrue(len(papers) >= 0)  # May return 0 if no papers match
 
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_search_with_author_filter(self):
         if not self.api_accessible:
             self.skipTest("dblp API is not accessible")
@@ -87,6 +93,7 @@ class TestDBLPSearcher(unittest.TestCase):
 
         self.assertTrue(len(papers) >= 0)
 
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_search_with_venue_filter(self):
         if not self.api_accessible:
             self.skipTest("dblp API is not accessible")
@@ -117,6 +124,7 @@ class TestDBLPSearcher(unittest.TestCase):
         with self.assertRaises(NotImplementedError):
             searcher.read_paper("test_paper_id", "./downloads")
 
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_search_computer_science_topics(self):
         if not self.api_accessible:
             self.skipTest("dblp API is not accessible")

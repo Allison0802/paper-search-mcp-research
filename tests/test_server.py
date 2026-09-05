@@ -3,6 +3,7 @@ import unittest
 import asyncio
 import os
 from paper_search_mcp import server
+from tests.live import live_tests_enabled
 
 class TestPaperSearchServer(unittest.TestCase):
     def test_all_sources_include_new_platforms(self):
@@ -20,6 +21,7 @@ class TestPaperSearchServer(unittest.TestCase):
         parsed = server._parse_sources("dblp,doaj,base,zenodo,hal,ssrn,unpaywall,invalid")
         self.assertEqual(parsed, ["dblp", "doaj", "base", "zenodo", "hal", "ssrn", "unpaywall"])
 
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_search_arxiv(self):
         """Test the search_arxiv tool returns 10 results."""
         result = asyncio.run(server.search_arxiv("machine learning", max_results=10))
@@ -29,6 +31,7 @@ class TestPaperSearchServer(unittest.TestCase):
             self.assertIn('title', paper, "Each result should contain a title")
             self.assertIn('paper_id', paper, "Each result should contain a paper_id")
 
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_download_arxiv_from_search(self):
         """Test downloading 10 arXiv papers based on search results."""
         # 先搜索 10 个结果

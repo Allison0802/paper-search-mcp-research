@@ -4,10 +4,13 @@ import os
 import requests
 import urllib3
 from paper_search_mcp.academic_platforms.openaire import OpenAiresearcher
+from tests.live import live_tests_enabled
 
 
 def check_api_accessible():
     """Check if OpenAIRE API is accessible"""
+    if not live_tests_enabled():
+        return False
     try:
         # Test OpenAIRE API with a simple query (current endpoint)
         response = requests.get(
@@ -42,6 +45,7 @@ class TestOpenAiresearcher(unittest.TestCase):
     def setUp(self):
         self.searcher = OpenAiresearcher()
 
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_search_basic(self):
         if not self.api_accessible:
             self.skipTest("OpenAIRE API is not accessible")
@@ -64,6 +68,7 @@ class TestOpenAiresearcher(unittest.TestCase):
             self.assertTrue(papers[0].title)
             self.assertEqual(papers[0].source, 'openaire')
 
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_search_with_year_filter(self):
         if not self.api_accessible:
             self.skipTest("OpenAIRE API is not accessible")
@@ -82,6 +87,7 @@ class TestOpenAiresearcher(unittest.TestCase):
 
         self.assertTrue(len(papers) >= 0)  # May return 0 if no papers match
 
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_search_with_open_access_filter(self):
         if not self.api_accessible:
             self.skipTest("OpenAIRE API is not accessible")
@@ -99,6 +105,7 @@ class TestOpenAiresearcher(unittest.TestCase):
 
         self.assertTrue(len(papers) >= 0)
 
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_search_with_date_range(self):
         if not self.api_accessible:
             self.skipTest("OpenAIRE API is not accessible")
@@ -130,6 +137,7 @@ class TestOpenAiresearcher(unittest.TestCase):
         with self.assertRaises(NotImplementedError):
             searcher.read_paper("test_paper_id", "./downloads")
 
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_search_european_research_topics(self):
         if not self.api_accessible:
             self.skipTest("OpenAIRE API is not accessible")
@@ -152,6 +160,7 @@ class TestOpenAiresearcher(unittest.TestCase):
                     print(f"  Project ID: {papers[0].extra.get('project_id')}")
             self.assertTrue(len(papers) >= 0)
 
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_search_with_language_filter(self):
         if not self.api_accessible:
             self.skipTest("OpenAIRE API is not accessible")

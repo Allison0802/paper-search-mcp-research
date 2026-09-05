@@ -9,6 +9,7 @@ from bs4 import BeautifulSoup
 
 from ..paper import Paper
 from ..utils import extract_doi
+from ..provider_identity import provider_user_agent
 from .base import PaperSource
 
 logger = logging.getLogger(__name__)
@@ -26,7 +27,7 @@ class DBLPSearcher(PaperSource):
     def __init__(self):
         self.session = requests.Session()
         self.session.headers.update({
-            'User-Agent': 'paper-search-mcp/1.0 (https://github.com/openags/paper-search-mcp)',
+            'User-Agent': provider_user_agent(),
             'Accept': 'application/xml, application/json'
         })
 

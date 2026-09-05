@@ -20,6 +20,7 @@ from typing import List
 from .base import PaperSource
 from ..paper import Paper
 from ..config import get_env
+from ..provider_identity import REPOSITORY_URL
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +77,7 @@ class IEEESearcher(PaperSource):
         # TODO: implement real IEEE Xplore REST call here once key is available
         raise NotImplementedError(
             "IEEE Xplore search is not yet implemented.  "
-            "Contribute at https://github.com/your-repo/paper-search-mcp."
+            f"Contribute at {REPOSITORY_URL}."
         )
 
     def download_pdf(self, paper_id: str, save_path: str = "./downloads") -> str:

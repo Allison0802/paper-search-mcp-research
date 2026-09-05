@@ -1,0 +1,31 @@
+name: Release build (no publication)
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-release-artifacts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v4
+      - name: Confirm lock consistency
+        run: uv lock --check
+      - name: Build wheel and source distribution
+        run: uv build
+      - name: Retain build artifacts for this workflow
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-distributions
+          path: dist/
+
+# Deliberately no package-index publishing action, credentials, or OIDC grant.
+# A v* tag only runs the checks above and retains GitHub workflow artifacts.

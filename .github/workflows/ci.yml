@@ -1,0 +1,155 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  deterministic-tests:
+    name: Deterministic tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: astral-sh/setup-uv@v4
+      - name: Install the locked test environment
+        run: uv sync --all-extras --locked
+      - name: Compile the package and tests
+        run: uv run --no-sync python -m compileall -q paper_search_mcp tests
+      - name: Run hermetic regression suite
+        run: uv run --no-sync pytest -q --tb=short
+
+  build-and-clean-install:
+    name: Build and clean-install smoke test
+    needs: deterministic-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v4
+      - name: Confirm lock consistency
+        run: uv lock --check
+      - name: Build wheel and source distribution
+        run: uv build
+      - name: Check distribution metadata and entry points
+        run: |
+          python - <<'PY'
+          import pathlib
+          import zipfile
+
+          wheel = next(pathlib.Path("dist").glob("*.whl"))
+          with zipfile.ZipFile(wheel) as archive:
+              metadata_name = next(name for name in archive.namelist() if name.endswith(".dist-info/METADATA"))
+              metadata = archive.read(metadata_name).decode()
+              entry_name = next(name for name in archive.namelist() if name.endswith(".dist-info/entry_points.txt"))
+              entry_points = archive.read(entry_name).decode()
+          assert "Name: paper-search-mcp-research" in metadata
+          assert "Version: 0.2.0" in metadata
+          assert "paper-search-mcp = paper_search_mcp.server:main" in entry_points
+          assert "paper-search = paper_search_mcp.cli:main" in entry_points
+          PY
+      - name: Install the wheel into a clean virtual environment
+        run: |
+          uv venv --clear .release-venv
+          uv pip install --python .release-venv/bin/python dist/*.whl
+      - name: Smoke-test installed imports and CLI entry point
+        run: |
+          .release-venv/bin/python -c "from importlib.metadata import distribution; import paper_search_mcp.server; assert distribution('paper-search-mcp-research').version == '0.2.0'"
+          .release-venv/bin/paper-search --help
+      - name: Exercise the installed MCP entry point over stdio
+        run: |
+          .release-venv/bin/python - <<'PY'
+          import json
+          import select
+          import subprocess
+          import time
+
+          process = subprocess.Popen(
+              [".release-venv/bin/paper-search-mcp"],
+              stdin=subprocess.PIPE,
+              stdout=subprocess.PIPE,
+              stderr=subprocess.PIPE,
+              text=True,
+              bufsize=1,
+          )
+
+          def send(message):
+              assert process.stdin is not None
+              process.stdin.write(json.dumps(message) + "\n")
+              process.stdin.flush()
+
+          def receive(request_id, timeout=15):
+              deadline = time.monotonic() + timeout
+              while time.monotonic() < deadline:
+                  ready, _, _ = select.select(
+                      [process.stdout], [], [], deadline - time.monotonic()
+                  )
+                  if not ready:
+                      break
+                  line = process.stdout.readline()
+                  if not line:
+                      stderr = process.stderr.read() if process.poll() is not None else ""
+                      raise RuntimeError(
+                          f"MCP stdout closed before response {request_id}; "
+                          f"returncode={process.poll()}; stderr={stderr!r}"
+                      )
+                  response = json.loads(line)
+                  if response.get("id") == request_id:
+                      return response
+              raise TimeoutError(
+                  f"MCP timed out waiting for response {request_id}; "
+                  f"returncode={process.poll()}"
+              )
+
+          try:
+              send({
+                  "jsonrpc": "2.0",
+                  "id": 1,
+                  "method": "initialize",
+                  "params": {
+                      "protocolVersion": "2025-11-25",
+                      "capabilities": {},
+                      "clientInfo": {"name": "release-smoke", "version": "1.0"},
+                  },
+              })
+              initialized = receive(1)
+              assert "result" in initialized and "protocolVersion" in initialized["result"], initialized
+
+              send({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
+              send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+              tool_list = receive(2)
+              assert "result" in tool_list, tool_list
+              tool_names = {tool["name"] for tool in tool_list["result"]["tools"]}
+              required_tools = {"list_journal_issue", "download_journal_issue"}
+              assert required_tools <= tool_names, tool_names
+              scihub_tools = {name for name in tool_names if "scihub" in name.casefold()}
+              assert not scihub_tools, scihub_tools
+          finally:
+              if process.stdin is not None:
+                  process.stdin.close()
+                  process.stdin = None
+              try:
+                  process.wait(timeout=5)
+              except subprocess.TimeoutExpired:
+                  process.terminate()
+                  process.wait(timeout=5)
+
+          if process.returncode != 0:
+              stderr = process.stderr.read()
+              raise SystemExit(
+                  f"MCP entry point exited {process.returncode}; stderr={stderr!r}"
+              )
+          PY

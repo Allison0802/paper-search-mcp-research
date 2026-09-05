@@ -173,3 +173,12 @@ cython_debug/
 ./test_downloads
 downloads/
 test_downloads/
+
+# Local release-preparation state and provider-response captures. The public
+# reproducibility guide is intentionally retained; raw live-provider evidence
+# stays local because it can be large, stale, or contain third-party metadata.
+/.superpowers/
+/.worktrees/
+/.release-venv/
+/docs/testing/*
+!/docs/testing/README.md

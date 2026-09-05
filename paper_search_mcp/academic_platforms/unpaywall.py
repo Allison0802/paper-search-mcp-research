@@ -5,6 +5,7 @@ import requests
 from ..paper import Paper
 from ..utils import extract_doi
 from ..config import get_env
+from ..provider_identity import provider_user_agent
 from .base import PaperSource
 
 logger = logging.getLogger(__name__)
@@ -14,14 +15,14 @@ class UnpaywallResolver:
     """Resolve open-access links using the Unpaywall API."""
 
     BASE_URL = "https://api.unpaywall.org/v2"
-    USER_AGENT = "paper-search-mcp/0.1.3 (https://github.com/openags/paper-search-mcp)"
+    USER_AGENT = provider_user_agent()
 
     def __init__(self, email: Optional[str] = None):
         configured_email = get_env("UNPAYWALL_EMAIL", "") if email is None else email
         self.email = configured_email.strip()
         self.session = requests.Session()
         self.session.headers.update({
-            "User-Agent": self.USER_AGENT,
+            "User-Agent": provider_user_agent(),
             "Accept": "application/json",
         })
 
@@ -67,6 +68,66 @@ class UnpaywallResolver:
             logger.warning("Unexpected Unpaywall resolver error for DOI %s: %s", doi, exc)
 
         return None
+
+    def resolve_ranked_pdf_candidates(self, doi: str) -> List[Dict[str, str]]:
+        """Return OA PDF candidates ordered by publication-version quality.
+
+        Unpaywall exposes both ``host_type`` and ``version`` for OA locations.
+        Preserve those semantics instead of treating the first reachable URL as
+        interchangeable with every other copy.
+        """
+        normalized_doi = (doi or "").strip()
+        if not normalized_doi or not self.email:
+            return []
+
+        data = self._fetch_doi_record(normalized_doi)
+        if not data:
+            return []
+
+        raw_locations: List[Dict[str, Any]] = []
+        best_location = data.get("best_oa_location") or {}
+        if isinstance(best_location, dict) and best_location:
+            raw_locations.append(best_location)
+        for location in data.get("oa_locations", []) or []:
+            if isinstance(location, dict):
+                raw_locations.append(location)
+
+        candidates: List[Dict[str, str]] = []
+        seen_urls: set[str] = set()
+        for sequence, location in enumerate(raw_locations):
+            url = str(location.get("url_for_pdf") or location.get("url") or "").strip()
+            if not url or url in seen_urls:
+                continue
+            seen_urls.add(url)
+
+            host_type = str(location.get("host_type") or "").strip().casefold()
+            raw_version = str(location.get("version") or "").strip()
+            version = raw_version.casefold()
+
+            if version == "publishedversion":
+                version_type = "version_of_record"
+                rank = 0 if host_type == "publisher" else 1
+            elif version == "acceptedversion":
+                version_type = "accepted_manuscript"
+                rank = 2
+            elif version == "submittedversion":
+                version_type = "preprint"
+                rank = 3
+            else:
+                version_type = "unknown"
+                rank = 4
+
+            candidates.append({
+                "url": url,
+                "version_type": version_type,
+                "host_type": host_type,
+                "raw_version": raw_version,
+                "rank": str(rank),
+                "sequence": str(sequence),
+            })
+
+        candidates.sort(key=lambda candidate: (int(candidate["rank"]), int(candidate["sequence"])))
+        return candidates
 
     def get_paper_by_doi(self, doi: str) -> Optional[Paper]:
         """Fetch Unpaywall metadata by DOI and map it to a Paper object.

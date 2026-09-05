@@ -3,10 +3,13 @@ import requests
 from unittest.mock import Mock, patch
 
 from paper_search_mcp.academic_platforms.citeseerx import CiteSeerXSearcher
+from tests.live import live_tests_enabled
 
 
 def check_api_accessible() -> bool:
     """Check whether CiteSeerX search API is reachable and *not* redirecting to archive."""
+    if not live_tests_enabled():
+        return False
     try:
         response = requests.get(
             "https://citeseerx.ist.psu.edu/api/search",
@@ -28,6 +31,7 @@ class TestCiteSeerXSearcher(unittest.TestCase):
     def setUp(self):
         self.searcher = CiteSeerXSearcher()
 
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_search_basic(self):
         if not self.api_accessible:
             self.skipTest("CiteSeerX API is not accessible")

@@ -16,6 +16,7 @@ from urllib.parse import quote
 from ..paper import Paper
 from ..utils import extract_doi
 from ..config import get_env
+from ..provider_identity import provider_user_agent
 from .base import PaperSource
 
 logger = logging.getLogger(__name__)
@@ -25,7 +26,7 @@ class DOAJSearcher(PaperSource):
     """Searcher for DOAJ (Directory of Open Access Journals)."""
 
     BASE_URL = "https://doaj.org/api"
-    USER_AGENT = "paper-search-mcp/0.1.3 (https://github.com/openags/paper-search-mcp)"
+    USER_AGENT = provider_user_agent()
 
     def __init__(self, api_key: Optional[str] = None):
         """Initialize DOAJ searcher.
@@ -37,7 +38,7 @@ class DOAJSearcher(PaperSource):
         self.api_key = api_key or get_env("DOAJ_API_KEY", "")
         self.session = requests.Session()
         self.session.headers.update({
-            'User-Agent': self.USER_AGENT,
+            'User-Agent': provider_user_agent(),
             'Accept': 'application/json'
         })
 

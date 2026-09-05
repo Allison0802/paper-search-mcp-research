@@ -5,6 +5,8 @@ import logging
 from ..paper import Paper
 from .base import PaperSource
 from ..utils import extract_doi
+from ..journal_issue import normalize_doi
+from ..provider_identity import provider_user_agent
 
 logger = logging.getLogger(__name__)
 
@@ -16,9 +18,9 @@ class OpenAlexSearcher(PaperSource):
 
     def __init__(self):
         self.session = requests.Session()
-        # OpenAlex encourages providing an email in User-Agent for the "polite pool"
+        # OpenAlex accepts an optional configured contact for its polite pool.
         self.session.headers.update(
-            {"User-Agent": "paper-search-mcp/1.0 (mailto:openags@example.com)"}
+            {"User-Agent": provider_user_agent()}
         )
 
     def _reconstruct_abstract(self, inverted_index: dict) -> str:
@@ -98,6 +100,7 @@ class OpenAlexSearcher(PaperSource):
 
                 if not doi and abstract:
                     doi = extract_doi(abstract)
+                doi = normalize_doi(doi)
 
                 # Process URLs (Landing page vs direct PDF)
                 url = ""
@@ -145,6 +148,15 @@ class OpenAlexSearcher(PaperSource):
                         categories=concepts[:5],  # Keep top 5 concepts to reduce size
                         doi=doi,
                         citations=item.get("cited_by_count", 0),
+                        extra={
+                            'container_title': ((primary_location or {}).get('source') or {}).get('display_name', ''),
+                            'issn': ((primary_location or {}).get('source') or {}).get('issn', []),
+                            'volume': (item.get('biblio') or {}).get('volume', ''),
+                            'issue': (item.get('biblio') or {}).get('issue', ''),
+                            'first_page': (item.get('biblio') or {}).get('first_page', ''),
+                            'last_page': (item.get('biblio') or {}).get('last_page', ''),
+                            'date_basis': 'OpenAlex publication_date (may be first online)',
+                        },
                     )
                 )
 

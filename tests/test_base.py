@@ -3,10 +3,13 @@ import requests
 
 from paper_search_mcp.academic_platforms.base_search import BASESearcher
 from paper_search_mcp.paper import Paper
+from tests.live import live_tests_enabled
 
 
 def check_api_accessible() -> bool:
     """Check whether BASE OAI-PMH endpoint is reachable."""
+    if not live_tests_enabled():
+        return False
     try:
         response = requests.get(
             "https://api.base-search.net/cgi-bin/BaseHttpSearchInterface.fcgi",
@@ -31,6 +34,7 @@ class TestBASESearcher(unittest.TestCase):
     def setUp(self):
         self.searcher = BASESearcher()
 
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_search_basic(self):
         if not self.api_accessible:
             self.skipTest("BASE OAI-PMH endpoint is not accessible")

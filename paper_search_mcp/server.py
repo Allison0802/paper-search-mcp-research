@@ -14,7 +14,7 @@ from .academic_platforms.medrxiv import MedRxivSearcher
 from .academic_platforms.google_scholar import GoogleScholarSearcher
 from .academic_platforms.iacr import IACRSearcher
 from .academic_platforms.semantic import SemanticSearcher
-from .academic_platforms.crossref import CrossRefSearcher
+from .academic_platforms.crossref import CrossRefIssueDiscoveryError, CrossRefSearcher
 from .academic_platforms.openalex import OpenAlexSearcher
 from .academic_platforms.pmc import PMCSearcher
 from .academic_platforms.core import CORESearcher
@@ -30,6 +30,14 @@ from .academic_platforms.zenodo import ZenodoSearcher
 from .academic_platforms.hal import HALSearcher
 from .academic_platforms.ssrn import SSRNSearcher
 from .utils import extract_doi
+from .journal_issue import (
+    dedupe_issue_papers,
+    discovery_error_summary,
+    download_issue_batch,
+    issue_sort_key,
+    looks_like_pdf,
+    normalize_doi,
+)
 
 # from .academic_platforms.hub import SciHubSearcher
 from .paper import Paper
@@ -62,6 +70,11 @@ zenodo_searcher = ZenodoSearcher()
 hal_searcher = HALSearcher()
 ssrn_searcher = SSRNSearcher()
 # scihub_searcher = SciHubSearcher()
+
+
+def _scihub_enabled() -> bool:
+    """Allow the retained local compatibility connector only when opted in."""
+    return get_env("ENABLE_SCIHUB", "").strip() == "1"
 
 
 # Asynchronous helper to adapt synchronous searchers
@@ -184,22 +197,34 @@ async def _download_from_url(pdf_url: str, save_path: str, filename_hint: str = 
         if response.status_code >= 400 or not response.content:
             return None
 
-        content_type = (response.headers.get("content-type") or "").lower()
-        is_pdf = "pdf" in content_type or response.content.startswith(b"%PDF") or pdf_url.lower().endswith(".pdf")
-        if not is_pdf:
-            logger.warning("Resolved URL is not a PDF candidate: %s (content-type=%s)", pdf_url, content_type)
+        if not response.content.startswith(b"%PDF"):
+            content_type = (response.headers.get("content-type") or "").lower()
+            logger.warning("Resolved URL is not a valid PDF: %s (content-type=%s)", pdf_url, content_type)
             return None
 
-        with open(output_path, "wb") as file_obj:
+        temporary_path = f"{output_path}.part"
+        with open(temporary_path, "wb") as file_obj:
             file_obj.write(response.content)
+        os.replace(temporary_path, output_path)
 
         return output_path
     except Exception as exc:
+        try:
+            if 'temporary_path' in locals() and os.path.exists(temporary_path):
+                os.remove(temporary_path)
+        except OSError:
+            pass
         logger.warning("Direct URL download failed for %s: %s", pdf_url, exc)
         return None
 
 
-async def _try_repository_fallback(doi: str, title: str, save_path: str) -> tuple[Optional[str], str]:
+async def _try_repository_fallback(
+    doi: str,
+    title: str,
+    save_path: str,
+    *,
+    include_source: bool = False,
+) -> tuple[Optional[str], str] | tuple[Optional[str], str, str]:
     repository_searchers = [
         ("openaire", openaire_searcher),
         ("core", core_searcher),
@@ -210,6 +235,8 @@ async def _try_repository_fallback(doi: str, title: str, save_path: str) -> tupl
     query_candidates = [(doi or "").strip(), (title or "").strip()]
     query_candidates = [candidate for candidate in query_candidates if candidate]
     if not query_candidates:
+        if include_source:
+            return None, "no DOI/title provided for repository fallback", ""
         return None, "no DOI/title provided for repository fallback"
 
     repository_errors: List[str] = []
@@ -226,6 +253,16 @@ async def _try_repository_fallback(doi: str, title: str, save_path: str) -> tupl
                 continue
 
             for paper in papers:
+                from .journal_issue import normalize_doi
+                candidate_doi = normalize_doi(getattr(paper, 'doi', ''))
+                requested_doi = normalize_doi(doi)
+                normalize_title = lambda value: ''.join(c for c in str(value).casefold() if c.isalnum())
+                same_title = bool(title) and normalize_title(getattr(paper, 'title', '')) == normalize_title(title)
+                if requested_doi and candidate_doi:
+                    if candidate_doi != requested_doi:
+                        continue
+                elif not same_title:
+                    continue
                 pdf_url = str(getattr(paper, "pdf_url", "") or "").strip()
                 if not pdf_url:
                     continue
@@ -234,9 +271,235 @@ async def _try_repository_fallback(doi: str, title: str, save_path: str) -> tupl
                 paper_id = str(raw_paper_id or query).strip()
                 downloaded = await _download_from_url(pdf_url, save_path, f"{repo_name}_{paper_id}")
                 if downloaded:
+                    if include_source:
+                        return downloaded, "", repo_name
                     return downloaded, ""
 
+    if include_source:
+        return None, "; ".join(repository_errors), ""
     return None, "; ".join(repository_errors)
+
+
+def _discard_invalid_pdf(path: Any) -> None:
+    """Remove only a local, invalid candidate left by a retrieval provider."""
+    if not isinstance(path, (str, os.PathLike)) or not path:
+        return
+    try:
+        if os.path.isfile(path) and not looks_like_pdf(path):
+            os.remove(path)
+    except OSError:
+        pass
+
+
+async def _download_with_oa_fallback_structured(
+    source: str,
+    paper_id: str,
+    doi: str = "",
+    title: str = "",
+    save_path: str = "./downloads",
+    *,
+    direct_pdf_url: str = "",
+    use_scihub: bool = False,
+    scihub_base_url: str = "https://sci-hub.se",
+) -> Dict[str, str]:
+    """Resolve one PDF while preferring the best lawful publication version.
+
+    Selection is version-aware when DOI metadata exposes version provenance:
+    publisher Version of Record -> repository Version of Record -> accepted
+    manuscript -> source-latest preprint -> older/submitted preprint.  Unknown
+    repository copies remain eligible but are never mislabeled as a final
+    version.  ``download_with_fallback`` below preserves the public path-or-
+    message interface.
+    """
+    source_name = source.strip().lower()
+    preprint_sources = {"arxiv", "biorxiv", "medrxiv", "ssrn"}
+    journal_doi = normalize_doi(doi)
+    preprint_id = str(paper_id or "").strip() if source_name in preprint_sources else ""
+    attempt_errors: List[str] = []
+    attempted_urls: set[str] = set()
+
+    def success(
+        path: str,
+        retrieval_source: str,
+        version_type: str,
+        version_date: str = "",
+    ) -> Dict[str, str]:
+        return {
+            "path": path,
+            "retrieval_source": retrieval_source,
+            "version_type": version_type,
+            "journal_doi": journal_doi,
+            "preprint_id": preprint_id,
+            "version_date": version_date,
+            "error": "",
+        }
+
+    if direct_pdf_url:
+        attempted_urls.add(direct_pdf_url)
+        direct_result = await _download_from_url(direct_pdf_url, save_path, "direct_pdf")
+        if direct_result:
+            direct_version = "version_of_record" if source_name == "crossref" and journal_doi else "unknown"
+            return success(direct_result, "direct_pdf", direct_version)
+        attempt_errors.append("direct_pdf: download failed or content was not a PDF")
+
+    ranked_unpaywall: List[Dict[str, str]] = []
+    if journal_doi:
+        try:
+            ranked_unpaywall = await asyncio.to_thread(
+                unpaywall_resolver.resolve_ranked_pdf_candidates, journal_doi
+            )
+        except Exception as exc:
+            attempt_errors.append(f"unpaywall metadata: {exc}")
+
+    # Only versions with explicit high-quality provenance are allowed to outrank
+    # a source-native copy.  Submitted/unknown Unpaywall locations are deferred.
+    for candidate in ranked_unpaywall:
+        version_type = str(candidate.get("version_type") or "unknown")
+        if version_type not in {"version_of_record", "accepted_manuscript"}:
+            continue
+        candidate_url = str(candidate.get("url") or "").strip()
+        if not candidate_url or candidate_url in attempted_urls:
+            continue
+        attempted_urls.add(candidate_url)
+        host_type = str(candidate.get("host_type") or "unknown").strip().casefold() or "unknown"
+        result = await _download_from_url(candidate_url, save_path, f"unpaywall_{journal_doi}")
+        if result:
+            return success(result, f"unpaywall_{host_type}", version_type)
+        attempt_errors.append(f"unpaywall {version_type}/{host_type}: download failed")
+
+    primary_downloaders = {
+        "arxiv": arxiv_searcher.download_pdf,
+        "biorxiv": biorxiv_searcher.download_pdf,
+        "medrxiv": medrxiv_searcher.download_pdf,
+        "iacr": iacr_searcher.download_pdf,
+        "semantic": semantic_searcher.download_pdf,
+        "pubmed": pubmed_searcher.download_pdf,
+        "crossref": crossref_searcher.download_pdf,
+        "pmc": pmc_searcher.download_pdf,
+        "core": core_searcher.download_pdf,
+        "europepmc": europepmc_searcher.download_pdf,
+        "citeseerx": citeseerx_searcher.download_pdf,
+        "doaj": doaj_searcher.download_pdf,
+        "base": base_searcher.download_pdf,
+        "zenodo": zenodo_searcher.download_pdf,
+        "hal": hal_searcher.download_pdf,
+        "ssrn": ssrn_searcher.download_pdf,
+    }
+
+    async def try_primary() -> Optional[Dict[str, str]]:
+        primary_error = ""
+        if source_name in primary_downloaders:
+            try:
+                primary_result = await asyncio.to_thread(primary_downloaders[source_name], paper_id, save_path)
+                if isinstance(primary_result, str) and looks_like_pdf(primary_result):
+                    version_type = "preprint" if source_name in preprint_sources else "unknown"
+                    return success(primary_result, source_name, version_type)
+                if isinstance(primary_result, str) and primary_result:
+                    _discard_invalid_pdf(primary_result)
+                    primary_error = (
+                        primary_result
+                        if not os.path.isfile(primary_result)
+                        else "primary download was not a valid PDF"
+                    )
+            except Exception as exc:
+                primary_error = str(exc)
+                logger.warning("Primary download failed for %s/%s: %s", source_name, paper_id, exc)
+        else:
+            primary_error = f"Unsupported source '{source_name}' for primary download."
+        if primary_error:
+            attempt_errors.append(f"primary: {primary_error}")
+        return None
+
+    async def try_repositories() -> Optional[Dict[str, str]]:
+        repository_outcome = await _try_repository_fallback(
+            doi, title, save_path, include_source=True
+        )
+        if len(repository_outcome) == 3:
+            repository_result, repository_error, repository_source = repository_outcome
+        else:  # Compatibility with test doubles and legacy internal callers.
+            repository_result, repository_error = repository_outcome
+            repository_source = "repository"
+        if repository_result:
+            if looks_like_pdf(repository_result):
+                return success(
+                    repository_result,
+                    str(repository_source or "repository"),
+                    "repository_copy",
+                )
+            _discard_invalid_pdf(repository_result)
+            attempt_errors.append("repositories: candidate was not a valid PDF")
+        if repository_error:
+            attempt_errors.append(f"repositories: {repository_error}")
+        return None
+
+    # A repository copy with unknown version provenance must not outrank a
+    # known source-latest preprint.  Only explicitly classified Unpaywall
+    # published/accepted versions are allowed to do that above.
+    primary_success = await try_primary()
+    if primary_success:
+        return primary_success
+
+    # Submitted/unknown DOI copies are lower priority than a source-latest
+    # preprint, but remain useful if the source-native route failed.
+    for candidate in ranked_unpaywall:
+        version_type = str(candidate.get("version_type") or "unknown")
+        if version_type in {"version_of_record", "accepted_manuscript"}:
+            continue
+        candidate_url = str(candidate.get("url") or "").strip()
+        if not candidate_url or candidate_url in attempted_urls:
+            continue
+        attempted_urls.add(candidate_url)
+        host_type = str(candidate.get("host_type") or "unknown").strip().casefold() or "unknown"
+        result = await _download_from_url(candidate_url, save_path, f"unpaywall_{journal_doi}")
+        if result:
+            return success(result, f"unpaywall_{host_type}", version_type)
+        attempt_errors.append(f"unpaywall {version_type}/{host_type}: download failed")
+
+    # Repository results without trustworthy version metadata are retained as a
+    # last lawful fallback, but they do not outrank any classified preprint.
+    repository_success = await try_repositories()
+    if repository_success:
+        return repository_success
+
+    # Backward-compatible last-resort Unpaywall resolver for installations or
+    # test doubles that expose only the older single-URL method.
+    if journal_doi:
+        unpaywall_url = await asyncio.to_thread(unpaywall_resolver.resolve_best_pdf_url, journal_doi)
+        if unpaywall_url and unpaywall_url not in attempted_urls:
+            attempted_urls.add(unpaywall_url)
+            unpaywall_result = await _download_from_url(
+                unpaywall_url, save_path, f"unpaywall_{journal_doi}"
+            )
+            if unpaywall_result:
+                return success(unpaywall_result, "unpaywall", "unknown")
+            attempt_errors.append("unpaywall: resolved OA URL but download failed")
+        elif not unpaywall_url and not ranked_unpaywall:
+            attempt_errors.append(
+                "unpaywall: no OA URL found (or PAPER_SEARCH_MCP_UNPAYWALL_EMAIL/UNPAYWALL_EMAIL missing)"
+            )
+    else:
+        attempt_errors.append("unpaywall: DOI not provided")
+
+    # Sci-Hub remains explicit opt-in only; it is never part of automatic OA
+    # version selection and its copy provenance is not asserted.
+    if use_scihub and _scihub_enabled():
+        fallback_identifier = (doi or "").strip() or (title or "").strip() or paper_id
+        fetcher = SciHubFetcher(base_url=scihub_base_url, output_dir=save_path)
+        fallback_result = await asyncio.to_thread(fetcher.download_pdf, fallback_identifier)
+        if isinstance(fallback_result, str) and looks_like_pdf(fallback_result):
+            return success(fallback_result, "scihub", "unknown")
+        _discard_invalid_pdf(fallback_result)
+        attempt_errors.append("scihub: download failed or content was not a valid PDF")
+
+    return {
+        "path": "",
+        "retrieval_source": "",
+        "version_type": "",
+        "journal_doi": journal_doi,
+        "preprint_id": preprint_id,
+        "version_date": "",
+        "error": "Download failed after OA fallback chain. Details: " + " | ".join(attempt_errors),
+    }
 
 
 @mcp.tool()
@@ -249,15 +512,45 @@ async def search_papers(
     """Unified top-level search across all configured academic platforms.
 
     Args:
-        query: Search query string.
-        max_results_per_source: Max results to fetch from each selected source.
+        query: Search query string. Use journal:"Exact Journal Title" with year
+            for complete Crossref issue-year retrieval (JASA alias accepted).
+            Optionally append volume:"V" after independently verifying the
+            publisher's nominal year for V; original dates remain unchanged.
+        max_results_per_source: Max results per source for keyword queries;
+            explicit journal queries enumerate the complete matching scope.
         sources: Comma-separated source names or 'all'.
             Available: arxiv,pubmed,biorxiv,medrxiv,google_scholar,iacr,semantic,crossref,openalex,pmc,core,europepmc,dblp,openaire,citeseerx,doaj,base,zenodo,hal,ssrn,unpaywall
-        year: Optional year filter for Semantic Scholar only.
+        year: Calendar year for journal queries; otherwise Semantic Scholar only.
     Returns:
         Aggregated dictionary with per-source stats, errors, and deduplicated papers.
     """
     selected_sources = _parse_sources(sources)
+
+    if query.strip().casefold().startswith('journal:'):
+        import re
+        match = re.fullmatch(r'journal:\s*"([^"]+)"(?:\s+volume:\s*"([^"]+)")?', query.strip(), re.IGNORECASE)
+        if not match:
+            raise ValueError('Use journal:"Exact Title" optionally followed by volume:"validated volume"')
+        journal, volume = match.groups()
+        if not journal or not year or not str(year).isdigit():
+            raise ValueError('journal: queries require a journal title and one calendar year')
+        errors = {s: 'Exact issue-year retrieval is supported by Crossref only; use sources="crossref"' for s in selected_sources if s != 'crossref'}
+        records = []
+        coverage = {}
+        if 'crossref' in selected_sources:
+            try:
+                options = {'volume': volume} if volume is not None else {}
+                found = await asyncio.to_thread(crossref_searcher.search_journal_year, journal, int(year), **options)
+                records = [p.to_dict() for p in found]
+                coverage['crossref'] = {'complete': True, 'count': len(records), 'scope': 'Caller-validated journal volume; original dates retained' if volume else 'Crossref indexed issue/print year; publication date when print unavailable'}
+            except Exception as exc:
+                errors['crossref'] = str(exc)
+                coverage['crossref'] = {'complete': False}
+        return {'query': query, 'year': year, 'sources_requested': sources,
+                'sources_used': ['crossref'] if 'crossref' in selected_sources else [],
+                'source_results': {'crossref': len(records)} if 'crossref' in selected_sources else {},
+                'errors': errors, 'coverage': coverage, 'papers': records,
+                'total': len(records), 'raw_total': len(records)}
 
     if not selected_sources:
         return {
@@ -731,7 +1024,6 @@ async def download_crossref(paper_id: str, save_path: str = "./downloads") -> st
         return str(e)
 
 
-@mcp.tool()
 async def download_scihub(
     identifier: str,
     save_path: str = "./downloads",
@@ -746,6 +1038,9 @@ async def download_scihub(
     Returns:
         Downloaded PDF path on success; error message on failure.
     """
+    if not _scihub_enabled():
+        return "Sci-Hub compatibility connector is disabled; set PAPER_SEARCH_MCP_ENABLE_SCIHUB=1 for local use."
+
     fetcher = SciHubFetcher(base_url=base_url, output_dir=save_path)
     result = await asyncio.to_thread(fetcher.download_pdf, identifier)
     if result:
@@ -760,7 +1055,7 @@ async def download_with_fallback(
     doi: str = "",
     title: str = "",
     save_path: str = "./downloads",
-    use_scihub: bool = True,
+    use_scihub: bool = False,
     scihub_base_url: str = "https://sci-hub.se",
 ) -> str:
     """Try source-native download, OA repositories, Unpaywall, then optional Sci-Hub.
@@ -776,74 +1071,95 @@ async def download_with_fallback(
     Returns:
         Download path on success or explanatory error message.
     """
-    source_name = source.strip().lower()
+    result = await _download_with_oa_fallback_structured(
+        source=source,
+        paper_id=paper_id,
+        doi=doi,
+        title=title,
+        save_path=save_path,
+        use_scihub=use_scihub,
+        scihub_base_url=scihub_base_url,
+    )
+    return result["path"] or result["error"]
 
-    primary_downloaders = {
-        "arxiv": arxiv_searcher.download_pdf,
-        "biorxiv": biorxiv_searcher.download_pdf,
-        "medrxiv": medrxiv_searcher.download_pdf,
-        "iacr": iacr_searcher.download_pdf,
-        "semantic": semantic_searcher.download_pdf,
-        "pubmed": pubmed_searcher.download_pdf,
-        "crossref": crossref_searcher.download_pdf,
-        "pmc": pmc_searcher.download_pdf,
-        "core": core_searcher.download_pdf,
-        "europepmc": europepmc_searcher.download_pdf,
-        "citeseerx": citeseerx_searcher.download_pdf,
-        "doaj": doaj_searcher.download_pdf,
-        "base": base_searcher.download_pdf,
-        "zenodo": zenodo_searcher.download_pdf,
-        "hal": hal_searcher.download_pdf,
-        "ssrn": ssrn_searcher.download_pdf,
+
+def _issue_list_paper(paper: Paper, order: int) -> Dict[str, Any]:
+    extra = paper.extra if isinstance(paper.extra, dict) else {}
+    published_date = paper.published_date
+    if hasattr(published_date, "isoformat"):
+        publication_date = published_date.isoformat()
+    else:
+        publication_date = str(published_date or "")
+    return {
+        "order": order,
+        "title": paper.title or "",
+        "authors": [str(author) for author in paper.authors],
+        "doi": paper.doi or "",
+        "pages": str(extra.get("page", "") or ""),
+        "publication_date": publication_date,
     }
 
-    attempt_errors: List[str] = []
-    primary_error = ""
-    if source_name in primary_downloaders:
-        try:
-            primary_result = await asyncio.to_thread(primary_downloaders[source_name], paper_id, save_path)
-            if isinstance(primary_result, str) and os.path.exists(primary_result):
-                return primary_result
-            if isinstance(primary_result, str) and primary_result:
-                primary_error = primary_result
-        except Exception as exc:
-            primary_error = str(exc)
-            logger.warning("Primary download failed for %s/%s: %s", source_name, paper_id, exc)
-    else:
-        primary_error = f"Unsupported source '{source_name}' for primary download."
 
-    if primary_error:
-        attempt_errors.append(f"primary: {primary_error}")
+@mcp.tool()
+async def list_journal_issue(journal: str, volume: str, issue: str) -> Dict[str, Any]:
+    """List every exact Crossref article in a journal volume and issue."""
+    try:
+        discovered = await asyncio.to_thread(crossref_searcher.search_issue, journal, volume, issue)
+    except CrossRefIssueDiscoveryError as exc:
+        return {"discovery_status": "error", "error": exc.reason}
 
-    repository_result, repository_error = await _try_repository_fallback(doi, title, save_path)
-    if repository_result:
-        return repository_result
-    if repository_error:
-        attempt_errors.append(f"repositories: {repository_error}")
+    papers = sorted(dedupe_issue_papers(discovered), key=issue_sort_key)
+    return {
+        "journal": journal,
+        "volume": volume,
+        "issue": issue,
+        "total": len(papers),
+        "papers": [_issue_list_paper(paper, order) for order, paper in enumerate(papers, start=1)],
+    }
 
-    normalized_doi = (doi or "").strip()
-    if normalized_doi:
-        unpaywall_url = await asyncio.to_thread(unpaywall_resolver.resolve_best_pdf_url, normalized_doi)
-        if unpaywall_url:
-            unpaywall_result = await _download_from_url(unpaywall_url, save_path, f"unpaywall_{normalized_doi}")
-            if unpaywall_result:
-                return unpaywall_result
-            attempt_errors.append("unpaywall: resolved OA URL but download failed")
-        else:
-            attempt_errors.append("unpaywall: no OA URL found (or PAPER_SEARCH_MCP_UNPAYWALL_EMAIL/UNPAYWALL_EMAIL missing)")
-    else:
-        attempt_errors.append("unpaywall: DOI not provided")
 
-    if not use_scihub:
-        return "Download failed after OA fallback chain. Details: " + " | ".join(attempt_errors)
+@mcp.tool()
+async def download_journal_issue(
+    journal: str,
+    volume: str,
+    issue: str,
+    save_path: str = "./papers",
+    max_concurrency: int = 4,
+    overwrite: bool = False,
+) -> Dict[str, Any]:
+    """Download every legally accessible PDF in one exact journal issue.
 
-    fallback_identifier = (doi or "").strip() or (title or "").strip() or paper_id
-    fetcher = SciHubFetcher(base_url=scihub_base_url, output_dir=save_path)
-    fallback_result = await asyncio.to_thread(fetcher.download_pdf, fallback_identifier)
-    if fallback_result:
-        return fallback_result
+    Crossref discovery is complete-or-error.  A discovery error still writes an
+    explicit manifest so an empty folder is never mistaken for an empty issue.
+    """
+    try:
+        discovered = await asyncio.to_thread(crossref_searcher.search_issue, journal, volume, issue)
+    except CrossRefIssueDiscoveryError as exc:
+        return discovery_error_summary(journal, volume, issue, save_path, exc.reason)
 
-    return "Download failed after OA fallback chain and Sci-Hub fallback. Details: " + " | ".join(attempt_errors)
+    papers = sorted(dedupe_issue_papers(discovered), key=issue_sort_key)
+
+    async def issue_downloader(paper: Paper, temporary_directory) -> Dict[str, str]:
+        return await _download_with_oa_fallback_structured(
+            source="crossref",
+            paper_id=paper.doi or paper.paper_id,
+            doi=paper.doi or "",
+            title=paper.title or "",
+            save_path=str(temporary_directory),
+            direct_pdf_url=paper.pdf_url or "",
+            use_scihub=False,
+        )
+
+    return await download_issue_batch(
+        papers,
+        journal,
+        volume,
+        issue,
+        save_path,
+        issue_downloader,
+        max_concurrency=max_concurrency,
+        overwrite=overwrite,
+    )
 
 
 @mcp.tool()

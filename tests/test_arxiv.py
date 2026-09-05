@@ -1,8 +1,10 @@
 # tests/test_arxiv.py
 import unittest
 from paper_search_mcp.academic_platforms.arxiv import ArxivSearcher
+from tests.live import live_tests_enabled
 
 class TestArxivSearcher(unittest.TestCase):
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_search(self):
         searcher = ArxivSearcher()
         papers = searcher.search("machine learning", max_results=10)

@@ -2,10 +2,13 @@ import unittest
 import requests
 
 from paper_search_mcp.academic_platforms.hal import HALSearcher
+from tests.live import live_tests_enabled
 
 
 def check_api_accessible() -> bool:
     """Check whether HAL API is reachable."""
+    if not live_tests_enabled():
+        return False
     try:
         response = requests.get(
             "https://api.archives-ouvertes.fr/search/",
@@ -27,6 +30,7 @@ class TestHALSearcher(unittest.TestCase):
     def setUp(self):
         self.searcher = HALSearcher()
 
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_search_basic(self):
         if not self.api_accessible:
             self.skipTest("HAL API is not accessible")

@@ -17,6 +17,7 @@ import requests
 
 from .base import PaperSource
 from ..paper import Paper
+from ..provider_identity import provider_user_agent
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,7 @@ class HALSearcher(PaperSource):
 
     # HAL search API (Solr interface)
     SEARCH_URL = "https://api.archives-ouvertes.fr/search/"
-    USER_AGENT = "paper-search-mcp/0.1.3 (https://github.com/openags/paper-search-mcp)"
+    USER_AGENT = provider_user_agent()
 
     # Fields requested from the API to minimise payload
     _FIELDS = ",".join(
@@ -52,7 +53,7 @@ class HALSearcher(PaperSource):
     def __init__(self) -> None:
         self.session = requests.Session()
         self.session.headers.update(
-            {"User-Agent": self.USER_AGENT, "Accept": "application/json"}
+            {"User-Agent": provider_user_agent(), "Accept": "application/json"}
         )
 
     # ------------------------------------------------------------------

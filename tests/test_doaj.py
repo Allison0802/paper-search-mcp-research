@@ -2,10 +2,13 @@ import unittest
 import requests
 
 from paper_search_mcp.academic_platforms.doaj import DOAJSearcher
+from tests.live import live_tests_enabled
 
 
 def check_api_accessible() -> bool:
     """Check whether DOAJ API is reachable."""
+    if not live_tests_enabled():
+        return False
     try:
         response = requests.get(
             "https://doaj.org/api/search/articles/machine%20learning",
@@ -27,6 +30,7 @@ class TestDOAJSearcher(unittest.TestCase):
     def setUp(self):
         self.searcher = DOAJSearcher()
 
+    @unittest.skipUnless(live_tests_enabled(), "live network test")
     def test_search_basic(self):
         if not self.api_accessible:
             self.skipTest("DOAJ API is not accessible")
